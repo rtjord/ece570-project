@@ -1,0 +1,234 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2026_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+
+
+\title{A Tiny Reproduction of CutMix on CIFAR-100 and Tiny ImageNet}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Ryan T. Jordan \thanks{ Use footnote for providing further information
+about author (webpage, alternative address)---\emph{not} for acknowledging
+funding agencies.  Funding acknowledgements go at the end of the paper.} \\
+Department of Electrical and Computer Engineering\\
+Purdue University\\
+West Lafayette, IN 47907, USA \\
+\texttt{jorda227@purdue.edu} \\
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+We revisit the CutMix data augmentation strategy on smaller image benchmarks. The original CutMix paper reports consistent improvements over baseline, MixUp, and Cutout on ImageNet-1k and other datasets. We design a “tiny reproduction” using ResNet-18 with linear probing and fine-tuning on CIFAR-100 and Tiny ImageNet, comparing Baseline, Cutout, MixUp, and CutMix under a unified training pipeline. Contrary to the original findings, none of the augmentations improve top-1 or top-5 accuracy over the baseline in our setting. We analyze this discrepancy in terms of dataset size, training schedule, and augmentation hyperparameters, and discuss implications for applying these methods on small, noisy datasets.
+\end{abstract}
+
+\section{Introduction}
+
+\subsection{Motivation}
+
+Deep convolutional neural networks (CNNs) achieve state-of-the-art performance on many vision benchmarks, including image classification, detection, and segmentation [Citation needed]. As models and datasets grow, simple data augmentation and regularization strategies---such as random crops, flips, and dropout---have become essential for improving generalization and robustness. More recently, augmentation methods that explicitly corrupt or rearrange regions of the input image, such as Cutout and related regional dropout techniques, have been proposed to discourage networks from relying on a small set of highly discriminative pixels and to encourage them to attend to the full spatial extent of objects [Citation needed].
+
+Among these methods, mixed-sample augmentations like MixUp~\cite{zhang2017mixup} and CutMix~\cite{yun2019cutmix} generate new training examples by combining pairs of images and their labels. These approaches are attractive in practice because they are simple to implement, add negligible runtime overhead, and can be dropped into an otherwise standard training pipeline. However, most empirical evaluations are conducted in large-scale, carefully tuned settings (e.g., ImageNet-1k with hundreds of epochs and high-capacity backbones), whereas many practitioners operate under more constrained conditions: small datasets, limited compute budgets, and simple training recipes. It is not obvious a priori that the gains reported for these augmentations will transfer unchanged to this small-scale regime.
+
+\subsection{Original paper's claims}
+
+CutMix~\cite{yun2019cutmix} was introduced as a simple yet powerful augmentation strategy that combines the ideas of regional dropout and sample mixing. Instead of zeroing out random patches as in Cutout~\cite{devries2017cutout} or interpolating entire images as in MixUp~\cite{zhang2017mixup}, CutMix cuts a rectangular patch from one training image and pastes it into another, while mixing the corresponding labels in proportion to the visible area. This construction aims to (i) avoid wasting pixels on uninformative blank regions, (ii) retain the regularization effect of forcing the model to use less discriminative object parts, and (iii) produce locally realistic composite images that remain semantically meaningful.
+
+The original CutMix paper reports that this strategy consistently improves over strong baselines and over both MixUp and Cutout across a wide range of tasks. On CIFAR-10/100, ImageNet-1k, and other classification benchmarks, CutMix yields higher top-1 accuracy than baseline and existing augmentations when combined with high-capacity models and long training schedules. Beyond classification, CutMix is claimed to improve weakly supervised object localization (WSOL), robustness to input corruptions, and transfer performance on downstream tasks. Overall, the paper presents CutMix as a broadly useful, “drop-in” augmentation that strengthens both classification accuracy and localization without requiring major changes to the training pipeline.
+
+\subsection{Tiny reproduction goal}
+
+In this work, we perform a \emph{tiny reproduction} of the CutMix classification results in a small-scale, single-GPU setting. Rather than attempting to replicate the full breadth of experiments from the original paper, we focus on its core claim: that CutMix outperforms a strong baseline and related augmentations such as MixUp and Cutout. We deliberately simplify the original setup while preserving its main ingredients:
+
+\begin{itemize}
+    \item \textbf{Datasets.} We evaluate on two smaller benchmarks, CIFAR-100 and Tiny ImageNet, which differ in resolution, number of classes, and dataset size, but are widely used as proxies for large-scale classification.
+    \item \textbf{Model and pipeline.} We use an ImageNet-pretrained ResNet-18 backbone with a two-stage training procedure: a linear probe (LP) stage followed by full fine-tuning (FT). This reflects a common downstream use case in which a pretrained model is adapted to a smaller target dataset.
+    \item \textbf{Augmentations.} Within a unified training framework, we compare a strong baseline using standard spatial transforms against three augmentation strategies: Cutout~\cite{devries2017cutout}, MixUp~\cite{zhang2017mixup}, and CutMix~\cite{yun2019cutmix}.
+\end{itemize}
+
+Our study is organized as a reproduction of the original CutMix claims under this simplified regime. We closely mirror their comparison between baseline, MixUp, Cutout, and CutMix, but under a much shorter training schedule and with a smaller backbone. We then analyze where our findings align with or diverge from the original results, and discuss possible explanations in terms of dataset scale, optimization budget, and augmentation strength. In particular, we ask: \emph{Do the reported gains from CutMix and related mixed-sample augmentations persist on small, noisy datasets when training an ImageNet-pretrained ResNet-18 under realistic compute constraints?} Our experiments suggest that the answer is more nuanced than the large-scale results alone would indicate, and highlight the importance of validating augmentation strategies in the target operating regime.
+
+
+\section{Background and Original Claims}
+
+\subsection{Data augmentation methods}
+
+Standard data augmentation techniques for image classification, such as random crops, horizontal flips, and color jitter, improve generalization by exposing the model to simple geometric and photometric variations of the training data. More recent work has proposed augmentation strategies that deliberately distort or mix training examples in order to act as strong regularizers.
+
+\paragraph{Cutout.}
+Cutout~\cite{devries2017cutout} is a regional dropout method that removes a contiguous patch from an image by overwriting it with a constant value (e.g., zeros). During training, a square hole of fixed size is placed at a random location in the input, forcing the classifier to rely on other object parts instead of a single highly discriminative region. This is intended to encourage more spatially distributed feature usage and improve robustness to occlusion.
+
+\paragraph{MixUp.}
+MixUp~\cite{zhang2017mixup} takes a different approach by linearly interpolating \emph{pairs} of examples and their labels in pixel space. Given two samples \((x_i, y_i)\) and \((x_j, y_j)\), MixUp constructs a virtual training example
+\[
+\tilde{x} = \lambda x_i + (1-\lambda)x_j, \qquad
+\tilde{y} = \lambda y_i + (1-\lambda)y_j,
+\]
+where \(\lambda \sim \mathrm{Beta}(\alpha, \alpha)\) for a hyperparameter \(\alpha > 0\). This encourages the model to behave linearly between training examples, which has been shown to reduce overfitting and improve calibration.
+
+\paragraph{CutMix.}
+CutMix~\cite{yun2019cutmix} combines the ideas of regional dropout and mixed-sample augmentation. Rather than erasing pixels as in Cutout or interpolating entire images as in MixUp, CutMix replaces a rectangular region of one image with a patch from another image, and mixes the corresponding labels in proportion to the area of the pasted region. Concretely, for images \(x_A, x_B\) and one-hot labels \(y_A, y_B\), CutMix samples \(\lambda \sim \mathrm{Beta}(\beta, \beta)\), computes the width and height of the crop as
+\[
+r_w = W \sqrt{1-\lambda}, \qquad r_h = H \sqrt{1-\lambda},
+\]
+and pastes the crop from \(x_B\) into a randomly chosen location in \(x_A\). The mixed label is then
+\[
+\tilde{y} = \lambda y_A + (1-\lambda) y_B,
+\]
+where \(\lambda\) is redefined to match the exact area ratio of the retained region of \(x_A\). In this way, CutMix aims to (i) avoid wasting pixels on blank holes, (ii) preserve the regularization effect of masking discriminative regions, and (iii) generate locally realistic composite images that remain semantically meaningful.
+
+Together, Cutout, MixUp, and CutMix represent three distinct strategies for using multiple images or regions per training example: pure deletion (Cutout), global interpolation (MixUp), and local patch replacement (CutMix). Our reproduction study focuses on comparing these three methods within a simplified but controlled experimental setting.
+
+\subsection{Original CutMix experimental setup and claims}
+
+The CutMix paper~\cite{yun2019cutmix} evaluates the method across several vision tasks, with a primary focus on large-scale image classification and weakly supervised object localization (WSOL). The core classification experiments are conducted on CIFAR-10, CIFAR-100, and ImageNet-1k using strong convolutional backbones and long training schedules.
+
+For CIFAR-100, the authors adopt a high-capacity PyramidNet-200 architecture with widening factor \(\tilde{\alpha}=240\), which has roughly 26.8M parameters and achieves a baseline top-1 error of 16.45\% without CutMix~\cite{yun2019cutmix}. Models are trained for 300 epochs with a mini-batch size of 64; the learning rate is initially set to 0.25 and decayed by a factor of 0.1 at epochs 150 and 225.\footnote{We refer to~\cite{yun2019cutmix} for full training details.} Under this strong baseline, CutMix yields state-of-the-art performance: the paper reports that CutMix improves CIFAR-100 top-1 error by approximately 1.98 percentage points relative to the baseline, and outperforms both Cutout and MixUp by +1.53 and +1.18 points, respectively~\cite{yun2019cutmix}. Similar gains are observed on CIFAR-10 when CutMix is added to PyramidNet-200 and other architectures.
+
+On ImageNet-1k classification, CutMix is applied to ResNet-50 and ResNet-101 backbones, as well as deeper models such as ResNeXt-101. The baseline ResNet-50 model, trained with standard augmentations, attains a top-1 accuracy of 76.3\%. Incorporating MixUp or Cutout yields modest improvements, but CutMix achieves the largest gain, reaching 78.6\% top-1 accuracy---an absolute improvement of approximately +2.3 percentage points over the baseline and larger gains than those obtained by simply increasing depth or adding architectural modules~\cite{yun2019cutmix}. Similar trends hold for deeper backbones, where CutMix consistently reduces top-1 error compared to the corresponding non-CutMix models.
+
+Beyond classification, the original paper evaluates CutMix on weakly supervised object localization (WSOL) tasks on CUB200-2011 and ImageNet. Using VGG-GAP and ResNet-50 as base architectures, CutMix improves localization accuracy over baseline, MixUp, and Cutout on both datasets~\cite{yun2019cutmix}. The authors argue that CutMix encourages the network to attend to a broader spatial extent of the object, leading to more localizable features.
+
+The paper further studies transfer learning and robustness. When CutMix-trained ImageNet models are used as pretrained backbones for downstream tasks such as Pascal VOC detection and MS-COCO image captioning, they show consistent gains over baselines and other augmentations~\cite{yun2019cutmix}. Additional experiments demonstrate improved robustness to occlusion, adversarial perturbations, and out-of-distribution (OOD) samples, with CutMix substantially outperforming MixUp and Cutout in OOD detection metrics.
+
+In summary, the original CutMix work makes a strong empirical claim: when combined with high-capacity CNNs and long training schedules on large-scale benchmarks, CutMix consistently outperforms both standard training and other advanced augmentations (MixUp, Cutout) in terms of classification accuracy, localization quality, transfer performance, and robustness. Our tiny reproduction focuses on the core classification aspect of this claim, under substantially reduced dataset and compute budgets.
+
+
+\section{Methods}
+
+\subsection{Overall design}
+Our goal is to perform a “tiny reproduction” of the CutMix paper’s core classification result—namely, that CutMix improves over a strong baseline and related augmentations such as MixUp and Cutout—under a constrained, single-GPU setting. To this end, we construct a unified training pipeline based on a ResNet-18 backbone and evaluate four augmentation configurations:
+
+Baseline: standard data augmentation only.
+
+Cutout: baseline + Cutout.
+
+MixUp: baseline + MixUp.
+
+CutMix: baseline + CutMix.
+
+All methods share the same architecture, optimizer, and training schedule, and differ only in the augmentation applied to each batch. We use a two-stage training procedure—linear probe followed by full fine-tuning—and reuse the linear-probe checkpoint across all augmentation variants to reduce compute and ensure a consistent initialization.
+
+We perform experiments on two small image classification benchmarks: CIFAR-100 and Tiny ImageNet. For each dataset and augmentation configuration, we train a separate ResNet-18 model and report top-1 and top-5 accuracy on the validation set.
+
+\subsection{Datasets}
+\subsubsection{CIFAR-100}
+CIFAR-100 consists of 50,000 training images and 10,000 test images of size 32×32, evenly distributed across 100 classes []. We follow the standard protocol and treat the official training split as the training set and the test split as the evaluation set. Images are normalized channel-wise using the dataset mean and standard deviation.
+
+For the baseline configuration, we apply commonly used spatial augmentations: random horizontal flip and random crop with padding around the original 32×32 image. No additional color jitter or advanced augmentations are used outside of MixUp, Cutout, and CutMix.
+
+\subsubsection{Tiny ImageNet}
+Tiny ImageNet is a downscaled subset of ImageNet, containing 200 classes with 500 training images and 50 validation images per class []. Images are resized to 64×64 and normalized using dataset statistics. We use the official training split for training and the validation split for evaluation.
+
+Baseline augmentations mirror those used for CIFAR-100, adapted to the larger spatial resolution: random resized crop (or random crop with padding) and random horizontal flip, followed by normalization. No label smoothing or other regularizers are applied unless otherwise specified.
+
+\subsection{Model and Training Procedure}
+
+We use a standard ResNet-18 architecture with the final fully connected layer modified to match the number of classes in each dataset (100 for CIFAR-100 and 200 for Tiny ImageNet). The backbone is initialized from an ImageNet-pretrained ResNet-18 checkpoint from \emph{Deep Residual Learning for Image Recognition}, rather than training from scratch. This reflects a common downstream usage pattern and reduces the total compute required.
+
+All models are trained with stochastic gradient descent (SGD) with Nesterov momentum using a batch size of 256. Unless otherwise stated, we keep the optimizer hyperparameters fixed across all experiments:
+\begin{itemize}
+    \item optimizer: SGD with momentum $0.9$ and Nesterov enabled,
+    \item weight decay: $5 \times 10^{-4}$,
+    \item batch size: 256.
+\end{itemize}
+
+We adopt a two-stage training procedure consisting of a linear probe stage followed by full fine-tuning.
+
+\paragraph{Linear probe (LP).}
+In the first stage, we freeze all convolutional layers and train only the final classification head for 20 epochs. We use a constant learning rate of $3 \times 10^{-3}$ throughout the LP stage, without any learning-rate warmup or decay schedule. This stage quickly adapts the pretrained backbone to the target dataset while keeping compute costs low. We save the resulting model parameters as the LP checkpoint.
+
+\paragraph{Fine-tuning (FT).}
+In the second stage, we load the LP checkpoint, unfreeze the entire network, and train all parameters jointly for 30 epochs. We again use SGD with Nesterov momentum and weight decay $5 \times 10^{-4}$, but reduce the base learning rate to $3 \times 10^{-4}$. During fine-tuning we apply a warmup--cosine learning-rate schedule: the learning rate is linearly increased from a fraction of the base value during an initial warmup period, and then decayed according to a cosine schedule over the remaining epochs. The warmup is used \emph{only} in the fine-tuning stage; the linear probe stage uses a fixed learning rate.
+
+For a given dataset, we run the LP stage once and reuse the resulting checkpoint as the starting point for all four augmentation configurations (Baseline, Cutout, MixUp, CutMix). Each configuration then performs its own 30-epoch fine-tuning run from this shared initialization, with identical optimizer and scheduling hyperparameters. This design isolates the effect of the augmentations themselves: any performance differences between configurations can be attributed to the augmentation strategy rather than to differences in optimization or initialization.
+
+\subsection{Augmentation configurations}
+We now describe the four augmentation settings evaluated in this study. In all cases, augmentations act on the training images only; validation images are left unmodified except for normalization.
+
+\subsubsection{Baseline (standard transforms)}
+
+The baseline pipeline applies only standard, label-preserving spatial transforms:
+
+\begin{enumerate}
+ \item Random horizontal flip with probability 0.5.
+ \item Random resized crop.
+ \item Per-channel normalization using dataset mean and standard deviation.
+\end{enumerate}
+This baseline serves as the reference against which we compare Cutout, MixUp, and CutMix.
+
+\subsubsection{Cutout}
+We implement Cutout using PyTorch’s RandomErasing transform. We erase a square patch covering 25\% of the image area with probability 0.5, replacing the pixels with zeros. Unlike the CutMix paper’s implementation of Cutout—where the patch center may lie outside the image and the erased region can extend beyond the image boundary—PyTorch’s RandomErasing constrains the patch to lie entirely within the image. Following the Cutout authors’ recommendation, we apply the transform with probability 0.5 to achieve a comparable effective strength. Apart from this erased region, the image and label remain unchanged.
+
+\subsection{Evaluation protocol}
+For each dataset and augmentation configuration, we evaluate the best validation-loss checkpoint from the fine-tuning stage. We report:
+
+\begin{itemize}
+    \item Top-1 accuracy: fraction of examples where the highest-probability predicted class matches the true label.
+    \item Top-5 accuracy: fraction where the true label appears among the five most probable classes.
+\end{itemize}
+All reported numbers are measured on the validation split (CIFAR-100 test set and Tiny ImageNet validation set). Unless otherwise stated, results are from a single training run per configuration; the codebase supports multiple seeds, and additional runs can be used to estimate variance.
+
+This controlled setup—shared architecture, optimizer, schedule, and evaluation protocol—allows us to directly compare the impact of MixUp, Cutout, and CutMix on small-scale image classification and to assess how well the gains reported in the original CutMix paper transfer to a constrained, “tiny reproduction” setting.
+
+\section{Results}
+
+\subsection{CIFAR-100}
+
+\subsection{Tiny ImageNet}
+
+\subsection{Comparison to original CutMix results}
+
+\section{Analysis and Discussion}
+
+\subsection{Why do augmentations hurt here?}
+
+\subsection{What this says about the original claims}
+
+\subsection{Threats to validity}
+
+\section{Conclusions and Future Work}
+
+\section{References}
+
+\section{Appendix}
+
+\subsection{Citations within the text}
+
+
+\subsubsection*{Acknowledgments}
+Use unnumbered third level headings for the acknowledgments. All
+acknowledgments, including those to funding agencies, go at the end of the paper.
+
+
+\bibliography{iclr2026_conference}
+\bibliographystyle{iclr2026_conference}
+
+\appendix
+You may include other additional sections here.
+
+
+\end{document}
