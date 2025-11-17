@@ -80,14 +80,7 @@ Tiny ImageNet is a downscaled subset of ImageNet with 200 classes and 500 traini
 
 \subsection{Model and training procedure}
 
-We use a ResNet-18 architecture with the final fully connected layer modified to match the number of classes in each dataset (100 for CIFAR-100 and 200 for Tiny ImageNet). The backbone is initialized from an ImageNet-pretrained ResNet-18 checkpoint from \emph{Deep Residual Learning for Image Recognition}. All models are trained with stochastic gradient descent (SGD) with Nesterov momentum:
-\begin{itemize}
-    \item momentum $0.9$, Nesterov enabled,
-    \item weight decay $5 \times 10^{-4}$,
-    \item batch size 256.
-\end{itemize}
-
-Training consists of a linear probe stage followed by fine-tuning.
+We use a ResNet-18 architecture with the final fully connected layer modified to match the number of classes in each dataset (100 for CIFAR-100 and 200 for Tiny ImageNet). The backbone is initialized from an ImageNet-pretrained ResNet-18 checkpoint from \emph{Deep Residual Learning for Image Recognition}. All models are trained with stochastic gradient descent (SGD) with Nesterov momentum, using momentum $0.9$, weight decay $5 \times 10^{-4}$, and a batch size of 256. Training consists of a linear probe stage followed by fine-tuning.
 
 \paragraph{Linear probe (LP).}
 We freeze all convolutional layers and train only the final classification head for 20 epochs with a constant learning rate of $3 \times 10^{-3}$, without any learning-rate warmup or decay. This quickly adapts the pretrained backbone to the target dataset at low cost. The resulting parameters are saved as the LP checkpoint.
