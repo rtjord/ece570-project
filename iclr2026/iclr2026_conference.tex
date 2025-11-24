@@ -10,18 +10,11 @@
 \usepackage{graphicx}
 
 
-\title{A Tiny Reproduction of CutMix on CIFAR-100 and Tiny ImageNet}
+\title{Cut Once, Measure Twice: A Reproduction of CutMix’s Reported Gains}
 
 % Authors must not appear in the submitted version. They should be hidden
 % as long as the \iclrfinalcopy macro remains commented out below.-
 % Non-anonymous submissions will be rejected without review.
-
-\author{Ryan T. Jordan \\
-Department of Electrical and Computer Engineering\\
-Purdue University\\
-West Lafayette, IN 47907, USA \\
-\texttt{jorda227@purdue.edu} \\
-}
 
 % The \author macro works with any number of authors. There are two commands
 % used to separate the names and addresses of multiple authors: \And and \AND.
@@ -41,81 +34,77 @@ West Lafayette, IN 47907, USA \\
 \maketitle
 
 \begin{abstract}
-We conduct a small-scale reproduction of CutMix under a constrained, single-GPU training regime. The original CutMix study reports consistent gains over standard training and over related strong augmentations (MixUp, Cutout) across CIFAR-10/100 and ImageNet-1k. Using a unified optimization recipe aligned with the CutMix ImageNet protocol, we train ResNet-50 and ResNet-18 from scratch on CIFAR-100 and ResNet-50 on Tiny ImageNet, modifying the ResNet stem to match each dataset’s resolution while holding all other hyperparameters fixed across augmentations. On CIFAR-100, CutMix yields the best performance for both architectures, improving top-1 accuracy by +4.23 points for ResNet-50 (76.52\%$\rightarrow$80.75\%) and +1.75 points for ResNet-18 (75.67\%$\rightarrow$77.42\%), with MixUp providing smaller gains and Cutout slightly degrading accuracy under untuned settings. In contrast, on Tiny ImageNet CutMix does not outperform the baseline (55.04\% vs.\ 53.38\% top-1), suggesting that mixed-sample augmentation benefits are less robust in low-resolution ImageNet-derived regimes without augmentation-specific tuning. These results clarify when CutMix behaves as a reliable drop-in regularizer in small-scale training and when its advantages may attenuate.
+We conduct a small-scale reproduction of CutMix under a constrained, single-GPU training regime. The original CutMix study reports consistent gains over standard training and over related strong augmentations (Mixup, Cutout) across CIFAR-10/100 and ImageNet-1k. Using a unified optimization recipe aligned with the CutMix ImageNet protocol, we train ResNet-50 and ResNet-18 from scratch on CIFAR-100 and ResNet-50 on Tiny ImageNet. On CIFAR-100, CutMix yields the best performance for both architectures, reducing top-1 error by 4.23 points for ResNet-50 and 1.75 points for ResNet-18 relative to the baseline. Mixup provides smaller but consistent gains, while Cutout slightly degrades performance under transferred erase parameters. In contrast, on Tiny ImageNet, CutMix underperforms the baseline, suggesting that CutMix benefits are less robust in small ImageNet-derived regimes without augmentation-specific tuning. Overall, the study reveals that CutMix’s effectiveness is dataset- and regime-dependent, acting as a strong regularizer on CIFAR-100 while modestly degrading performance on Tiny ImageNet in our specific training configuration.
 \end{abstract}
 
 
 \section{Introduction}
 
-Deep convolutional neural networks (CNNs) achieve state-of-the-art performance on many vision benchmarks, including image classification \citep{krizhevsky_imagenet_2012,he_deep_2016}, object detection \citep{ren_faster_2015,redmon_you_2016}, and semantic segmentation \citep{long_fully_2015,chen_deeplab_2018}.
- As models and datasets grow, simple data augmentation and regularization strategies---such as random crops, flips, and dropout---have become essential for improving generalization and robustness. Beyond these label-preserving transforms, a large body of work studies \emph{strong} augmentations that intentionally corrupt or mix training examples to serve as regularizers, encouraging models to rely on broader visual evidence and improving robustness to occlusion and distribution shift.
+Deep convolutional neural networks (CNNs) achieve state-of-the-art performance across vision tasks including image classification \citep{krizhevsky_imagenet_2012,he_deep_2016}, object detection \citep{ren_faster_2015,redmon_you_2016}, and semantic segmentation \citep{long_fully_2015,chen_deeplab_2018}.
+ As models and datasets scale, simple data augmentation and regularization strategies---such as random crops, flips, and dropout---have become essential for improving generalization and robustness \citep{cubuk_autoaugment_2019, srivastava_dropout_2014}. 
+ 
+Beyond label-preserving transforms, strong augmentations deliberately mix or corrupt examples to regularize models. Cutout~\citep{devries_improved_2017}, Mixup~\citep{zhang_mixup_2018}, and CutMix~\citep{yun_cutmix_2019} are three representative strong augmentations. Cutout removes a contiguous square patch from an image, forcing the classifier to use the remaining context. Mixup linearly interpolates pairs of images and labels in pixel space, promoting approximately linear behavior between examples. CutMix combines these ideas by replacing a rectangular region of one image with a patch from another and mixing labels in proportion to the visible area. The original CutMix study reports large improvements across CIFAR-10/100, ImageNet, weakly supervised object localization, and robustness benchmarks \citep{yun_cutmix_2019}.
 
-Cutout~\citep{devries_improved_2017}, MixUp~\citep{zhang_mixup_2018}, and CutMix~\citep{yun_cutmix_2019} are three representative strong augmentations. Cutout removes a contiguous square patch from an image, forcing the classifier to use remaining context. MixUp linearly interpolates pairs of images and labels in pixel space, promoting approximately linear behavior between examples. CutMix combines these ideas by replacing a rectangular region of one image with a patch from another and mixing labels in proportion to visible area. The CutMix study reports consistent improvements over strong baselines, MixUp, and Cutout on CIFAR-10/100 and ImageNet-1k, with additional gains in WSOL, transfer learning, and robustness benchmarks under large-scale, carefully tuned training regimes \citep{yun_cutmix_2019}.
+While Cutout, Mixup, and CutMix are all evaluated on CIFAR-scale benchmarks, their strongest gains are typically demonstrated under well-tuned training regimes (e.g., augmentation-specific hyperparameters, carefully chosen mask/mix ratios, and sufficiently long schedules) \citep{devries_improved_2017,zhang_mixup_2018,yun_cutmix_2019}. In many practical settings, users train standard backbones from scratch on small or medium-sized datasets with shorter schedules and limited augmentation tuning. It is therefore unclear whether the relative ordering and magnitude of improvements reported in the original studies transfer unchanged to this constrained regime.
 
-While Cutout, MixUp, and CutMix are all evaluated on CIFAR-scale benchmarks, their strongest gains are typically demonstrated under well-tuned training regimes (e.g., augmentation-specific hyperparameters, carefully chosen mask/mix ratios, and sufficiently long schedules), and CutMix additionally highlights large-scale ImageNet-1k results \citep{devries_improved_2017,zhang_mixup_2018,yun_cutmix_2019}. In many practical settings, users train standard backbones from scratch on small or medium-sized datasets with shorter schedules and limited augmentation tuning. It is therefore unclear whether the relative ordering and magnitude of improvements reported in the original studies transfer unchanged to this constrained regime.
+In this work, we perform a \emph{tiny reproduction} of CutMix in a constrained single-GPU setting, focusing on the core classification claim that CutMix outperforms a strong baseline and related augmentations. We compare Baseline vs.\ CutMix, with Mixup and Cutout as secondary baselines where feasible. We train ResNet-50 and ResNet-18 from scratch on CIFAR-100, and ResNet-50 on Tiny ImageNet, using a unified recipe. We adjust the ResNet stem to avoid overly aggressive early downsampling at each dataset’s resolution. All other architectural and optimization settings are held fixed so that performance differences can be attributed primarily to augmentation choice.
 
-In this work, we perform a \emph{tiny reproduction} of CutMix in a constrained single-GPU setting, focusing on the core classification claim that CutMix outperforms a strong baseline and related augmentations. We compare Baseline vs.\ CutMix, with MixUp and Cutout as secondary baselines where feasible. We train ResNet-50 and ResNet-18 from scratch on CIFAR-100 and Tiny ImageNet using a unified recipe, and adjust the ResNet stem to avoid overly aggressive early downsampling at each dataset’s resolution. All other architectural and optimization settings are held fixed so that performance differences can be attributed primarily to augmentation choice.
-
-We report comparative results across Baseline, Cutout, MixUp, and CutMix, and analyze when the original gains persist and when they attenuate. Specifically, we ask: \emph{Do the reported benefits of CutMix remain reliable on small, low-resolution datasets when training standard ResNets from scratch under realistic compute constraints?} The resulting comparisons clarify the extent to which CutMix behaves as a robust drop-in augmentation outside of the large-scale settings emphasized in the original work.
+We report comparative results across Baseline, Cutout, Mixup, and CutMix, and analyze when the original gains persist and when they attenuate. Specifically, we ask: \emph{Do the reported benefits of CutMix remain reliable on small, low-resolution datasets when training standard ResNets from scratch under realistic compute constraints?} The resulting comparisons clarify the extent to which CutMix behaves as a robust drop-in augmentation outside of the large-scale settings emphasized in the original work.
 
 
 \section{Methods}
 
-\subsection{Overall design}
-Our goal is to perform a ``tiny reproduction'' of the CutMix paper’s core classification claim---that CutMix improves over a strong baseline and related augmentations such as MixUp and Cutout---in a small-scale, single-GPU setting. We train convolutional classifiers from scratch on CIFAR-100 and Tiny ImageNet using a unified ResNet training pipeline, and compare augmentation strategies under identical optimization and scheduling choices. 
-
-We evaluate two backbones, ResNet-18 and ResNet-50. To respect dataset resolution, CIFAR-100 runs use a CIFAR-style stem (3$\times$3, stride 1, no maxpool), while Tiny ImageNet runs retain the standard ImageNet stem. For each dataset--architecture pair, we compare augmentation configurations that mirror the original paper’s setup: a Baseline using only standard spatial transforms, and CutMix; where feasible, we also include MixUp and Cutout as additional baselines. Across all configurations, the model architecture, optimizer, learning-rate schedule, batch size, and number of epochs are held fixed, so performance differences can be attributed primarily to the augmentation choice.
-
-Our primary reproduction comparison is Baseline vs.\ CutMix, following the CutMix CIFAR training recipe, and we report top-1 and top-5 accuracy on the CIFAR-100 test split and Tiny ImageNet validation split.
-
-
 \subsection{Datasets}
 
 \paragraph{CIFAR-100.}
-CIFAR-100 consists of 50{,}000 training images and 10{,}000 test images of size $32\times 32$ across 100 classes~\citep{krizhevsky2009learning}. We split the official training set into 90\% for training and 10\% for validation, and use the official test split only for final evaluation. All images are kept at their native resolution (no upscaling) and are normalized channel-wise using CIFAR-100 mean and standard deviation. For the Baseline configuration, we apply standard CIFAR augmentations: random horizontal flip with probability 0.5 and random $32\times 32$ crops from images padded by 4 pixels on each side as done in [citation needed]. No additional color or automated augmentation policies are used beyond the explicit MixUp, Cutout, and CutMix variants evaluated in this study.
+CIFAR-100 contains 50{,}000 training images and 10{,}000 test images at $32\times 32$ resolution across 100 classes~\citep{krizhevsky2009learning}. We split the official training set into 90\% for training and 10\% for validation, and use the official test split only for final evaluation. All images are kept at their native resolution (no upscaling) and are normalized channel-wise using CIFAR-100 mean and standard deviation. 
+
 
 \paragraph{Tiny ImageNet.}
-Tiny ImageNet is a downscaled subset of ImageNet containing 200 classes, with 500 training images and 50 validation images per class~\citep{le_tiny_2015}. Images are provided at $64\times 64$ resolution, which we preserve during training and evaluation. For Tiny ImageNet, the official test split is unlabeled. We therefore hold out 10\% of the training split for validation during training and use the official validation split as our final test set for reporting results. Images are normalized using ImageNet mean and standard deviation to match common ImageNet-style training practice. Baseline augmentations mirror those used for CIFAR-100, adapted to the larger resolution: random resized crops to $64\times 64$ and random horizontal flips, followed by normalization. Unless otherwise noted, we do not apply label smoothing or additional regularizers beyond the augmentation method under study.
+Tiny ImageNet is a downscaled subset of ImageNet containing 200 classes with 500 training images and 50 validation images per class~\citep{le_tiny_2015}. Images are provided at $64\times 64$ resolution, which we preserve during training and evaluation. For Tiny ImageNet, the official test split is unlabeled. We therefore hold out 10\% of the training split for validation during training and use the official validation split as our final test set for reporting results. Images are normalized using ImageNet mean and standard deviation to match common ImageNet-style training practice. 
 
 
 \subsection{Model and training procedure}
 
-We train convolutional classifiers from scratch on each dataset using two backbones, ResNet-18 and ResNet-50~\citep{he_deep_2016}. For CIFAR-100 ($32\times 32$ inputs), we use a CIFAR-style ResNet stem by replacing the first convolution with a $3\times 3$ stride-1 layer and removing the initial max-pooling operation, which prevents overly aggressive early downsampling on small images. For Tiny ImageNet ($64\times 64$ inputs), we adopt a milder modification: we replace the initial $7\times 7$ stride-2 convolution with a $3\times 3$ stride-1 layer to better preserve spatial detail, while retaining the standard max-pooling stage to maintain appropriate early downsampling at this higher resolution. In all cases, the final fully connected layer is replaced to match the dataset class count (100 for CIFAR-100 and 200 for Tiny ImageNet).
+We train convolutional classifiers from scratch using two backbones, ResNet-18 and ResNet-50~\citep{he_deep_2016}, on CIFAR-100, and ResNet-50 on Tiny ImageNet.
+Since these ResNet architectures are designed for input images with resolutions of $224\times224$, we modify the first layers for smaller inputs. For CIFAR-100 ($32\times 32$ inputs), we use a CIFAR-style ResNet stem by replacing the initial $7\times 7$ stride-2 convolution with a $3\times 3$ stride-1 layer and removing the initial max-pooling operation, following common adaptations of ResNet-50 to CIFAR-scale datasets \citep{zheng_weakly_2021, bendib_coviews_2024}. For Tiny ImageNet ($64\times 64$ inputs), we adopt a milder modification: we replace the initial convolution with a $3\times 3$ stride-1 layer to better preserve spatial detail, while retaining the standard max-pooling stage to maintain appropriate early downsampling at this higher resolution. In all cases, the final fully connected layer is replaced to match the dataset class count (100 for CIFAR-100 and 200 for Tiny ImageNet). In our configurations, ResNet-18 and ResNet-50 have on the order of 11M and 24M parameters, respectively, so we treat them as lower- and higher-capacity backbones.
 
-Optimization follows a controlled recipe shared across augmentation settings. We use stochastic gradient descent with Nesterov momentum (momentum $0.9$), weight decay $5\times 10^{-4}$, and batch size 256. Models are trained for 300 epochs with a step learning-rate schedule. The learning rate is initialized at a base value of 0.1 and decayed by a factor of 10 at epochs 75, 150, and 225. All remaining hyperparameters are held fixed across Baseline, Cutout, MixUp, and CutMix runs for a given dataset--architecture pair.
+
+Optimization follows a controlled recipe shared across augmentation settings. We use stochastic gradient descent with Nesterov momentum (momentum $0.9$), weight decay $5\times 10^{-4}$, and batch size 256. ResNet-50 models are trained for 300 epochs with a step learning-rate schedule. The learning rate is initialized at a base value of 0.1 and decayed by a factor of 10 at epochs 75, 150, and 225 as done by \citet{yun_cutmix_2019}. ResNet-18 models are trained for 200 epochs with an initial learning rate of 0.1, decayed by a factor of 10 at epochs 50, 100, and 150.
 
 \subsection{Augmentation configurations}
 \begin{figure}[t]
 \begin{center}
     \includegraphics[width=\linewidth]{figures/augmentation_strategies.pdf}
 \end{center}
-\caption{Example Tiny ImageNet training augmentations using the same two source images. From left to right: baseline (standard transforms), MixUp, Cutout, and CutMix. The class label shown under each image corresponds to the effective target used for training.}
+\caption{Example Tiny ImageNet training augmentations using the same two source images. From left to right: Baseline (standard transforms), Mixup, Cutout, and CutMix. The class label shown under each image corresponds to the effective target used for training.}
 \label{fig:augmentation_strategies}
 \end{figure}
 
-In all configurations, augmentations act only on training images; validation and testing images are left unmodified except for normalization.
+In all configurations, augmentations act only on training images; validation and testing images are left unmodified except for normalization. Figure~\ref{fig:augmentation_strategies} illustrates the four augmentation pipelines (Baseline, Mixup, Cutout, and CutMix) on Tiny ImageNet, using the same pair of source images for visual comparison.
+
 
 \paragraph{Baseline (standard transforms).}
-The Baseline pipeline uses only label-preserving spatial transforms. For CIFAR-100, this consists of random horizontal flips and random crops of padded images; for Tiny ImageNet, we use random resized crops to $64\times 64$ and random horizontal flips. These operations preserve the original class label and serve as the reference empirical risk minimization (ERM) setting, i.e., training on samples $(x,y)$ drawn directly from the dataset distribution without synthetic mixing or occlusion.
+The Baseline pipeline uses only label-preserving spatial transforms. For CIFAR-100, this consists of random horizontal flips (probability $0.5$) and random $32\times 32$ crops from images padded by 4 pixels on each side, as commonly done in ResNet CIFAR training pipelines~\citep{he_deep_2016}. For Tiny ImageNet, we use random resized crops to $64\times 64$ and random horizontal flips. These operations preserve the original class label and serve as the reference empirical risk minimization (ERM) setting, i.e., training on samples $(x,y)$ drawn directly from the dataset distribution without synthetic mixing or occlusion.
+
 
 \paragraph{Cutout.}
-Cutout introduces occlusion by masking a contiguous square region of an input image during training while leaving the label unchanged \citep{devries_improved_2017}. In our runs, we implement Cutout via \texttt{RandomErasing}: with probability $p=0.5$ we erase a square covering 25\% of the image area and fill it with a constant value. This acts as input-level regularization by removing potentially discriminative evidence and encouraging reliance on surrounding context.
+Cutout introduces occlusion by masking a contiguous square region of an input image during training while leaving the label unchanged \citep{devries_improved_2017}. Following the method of \citet{yun_cutmix_2019}, we erase a square covering 25\% of the image area with probability 0.5 and fill the area with zeros. This acts as input-level regularization by removing potentially discriminative evidence and encouraging reliance on surrounding context.
 
 \paragraph{Mixup.}
-Mixup forms virtual examples by linearly interpolating pairs of training samples and their one-hot labels \citep{zhang_mixup_2018}. Given $(x_i,y_i)$ and $(x_j,y_j)$, we sample $\lambda\sim\mathrm{Beta}(\alpha,\alpha)$ and construct $\tilde{x}=\lambda x_i+(1-\lambda)x_j$ and $\tilde{y}=\lambda y_i+(1-\lambda)y_j$. We apply MixUp to each minibatch with probability 0.5 and $\alpha=1.0$, providing a simple mixed-sample regularizer that encourages smoother decision boundaries.
+Mixup forms virtual examples by linearly interpolating pairs of training samples and their one-hot labels \citep{zhang_mixup_2018}. Given $(x_i,y_i)$ and $(x_j,y_j)$, we sample $\lambda\sim\mathrm{Beta}(\alpha,\alpha)$ and construct $\tilde{x}=\lambda x_i+(1-\lambda)x_j$ and $\tilde{y}=\lambda y_i+(1-\lambda)y_j$. We apply Mixup to each minibatch with probability 0.5 and $\alpha=1.0$, providing a simple mixed-sample regularizer that encourages smoother decision boundaries.
 
 \paragraph{CutMix.}
-CutMix combines regional dropout and label mixing by replacing a rectangular patch of one image with a patch from another. Given two samples $(x_A,y_A)$ and $(x_B,y_B)$, CutMix forms a binary mask $M\in\{0,1\}^{W\times H}$ and produces
+CutMix combines Cutout and Mixup by replacing a rectangular patch of one image with a patch from another. Given two samples $(x_A,y_A)$ and $(x_B,y_B)$, CutMix forms a binary mask $M\in\{0,1\}^{W\times H}$ and produces
 \[
 \tilde{x} = M\odot x_A + (1-M)\odot x_B,\qquad
 \tilde{y} = \lambda y_A + (1-\lambda) y_B,
 \]
-where $\odot$ is elementwise multiplication and $\lambda$ is the fraction of pixels coming from $x_A$ \citep{yun_cutmix_2019}. As with MixUp, $\lambda$ is sampled from $\mathrm{Beta}(\alpha,\alpha)$; however, unlike MixUp’s global blending, CutMix uses $\lambda$ to determine a \emph{local} patch size, yielding more natural-looking composites \citep{yun_cutmix_2019}. The patch box $B=(r_x,r_y,r_w,r_h)$ is sampled by drawing a center $(r_x,r_y)$ uniformly over the image and setting
-$r_w = W\sqrt{1-\lambda}$ and $r_h = H\sqrt{1-\lambda}$ so that the pasted area ratio satisfies $r_w r_h/(WH)=1-\lambda$ \citep{yun_cutmix_2019}. The mask $M$ is then 0 inside $B$ and 1 elsewhere, and CutMix is applied to randomly paired minibatch samples each iteration. Intuitively, CutMix maintains full-resolution evidence for both objects (unlike Cutout, which discards pixels, and MixUp, which introduces global transparency artifacts), encouraging the classifier to recognize partial object extents while still learning from locally coherent patches.
+where $\odot$ is elementwise multiplication and $\lambda$ is the fraction of pixels coming from $x_A$ \citep{yun_cutmix_2019}. As with Mixup, $\lambda$ is sampled from $\mathrm{Beta}(\alpha,\alpha)$. However, unlike Mixup’s global blending, CutMix uses $\lambda$ to determine a \emph{local} patch size, yielding more natural-looking composites. The patch box $B=(r_x,r_y,r_w,r_h)$ is sampled by drawing a center $(r_x,r_y)$ uniformly over the image and setting
+$r_w = W\sqrt{1-\lambda}$ and $r_h = H\sqrt{1-\lambda}$ so that the pasted area ratio satisfies $r_w r_h/(WH)=1-\lambda$. The mask $M$ is then 0 inside $B$ and 1 elsewhere, and CutMix is applied to randomly paired minibatch samples each iteration. Intuitively, CutMix maintains full-resolution evidence for both objects (unlike Cutout, which discards pixels, and Mixup, which introduces global transparency artifacts), encouraging the classifier to recognize parts of objects while still learning from locally coherent patches.
 
 \subsection{Evaluation protocol}
-For each dataset, architecture, and augmentation configuration, we select the checkpoint with the lowest validation loss over training and report its performance. Top-1 and top-5 accuracy are computed on the CIFAR-100 test split and the Tiny ImageNet validation split. Unless otherwise specified, we report results from a single run per configuration; for the core Baseline vs.\ CutMix comparisons we additionally run multiple random seeds to assess consistency. Because all configurations share the same backbone, optimizer, learning-rate schedule, batch size, and evaluation procedure within a dataset--architecture pair, observed differences are attributed primarily to the augmentation strategy.
-
+For each dataset, architecture, and augmentation configuration, we select the checkpoint with the lowest validation loss over training and report its performance. Top-1 and top-5 accuracy are computed on the CIFAR-100 test split and the Tiny ImageNet validation split. We report results from a single run per configuration due to compute constraints. Because all configurations share the same backbone, optimizer, learning-rate schedule, batch size, and evaluation procedure within a dataset--architecture pair, observed differences are attributed primarily to the augmentation strategy.
 
 \section{Results}
 
@@ -130,18 +119,18 @@ For each dataset, architecture, and augmentation configuration, we select the ch
 \hline \\
 ResNet-50 (Baseline) & 23.48 & 6.02 \\
 ResNet-50 + Cutout   & 23.97 & 6.28 \\
-ResNet-50 + MixUp    & 21.59 & 5.51 \\
+ResNet-50 + Mixup    & 21.59 & 5.51 \\
 ResNet-50 + CutMix   & \textbf{19.25} & \textbf{4.63} \\
 \hline
 ResNet-18 (Baseline) & 24.33 & 6.78 \\
 ResNet-18 + Cutout & 24.37 & 6.83 \\
-ResNet-18 + MixUp & 23.24 & 6.67 \\
+ResNet-18 + Mixup & 23.24 & 6.67 \\
 ResNet-18 + CutMix   & \textbf{22.58} & \textbf{6.16} \\
 \end{tabular}
 \end{center}
 \end{table}
 
-Table~\ref{tab:cifar100_results} reports CIFAR-100 error rates for ResNet-50 and ResNet-18 trained from scratch under a fixed optimization and augmentation protocol. CutMix achieves the best performance for both backbones, reducing top-1 error by 4.23 points on ResNet-50 (23.48 $\rightarrow$ 19.25) and 1.75 points on ResNet-18 (24.33 $\rightarrow$ 22.58) relative to the baseline. MixUp yields smaller but consistent gains over baseline, while Cutout slightly increases both top-1 and top-5 error. Figure~\ref{fig:resnet50_cifar100_top1_err} shows that CutMix improves validation error throughout training rather than only at convergence, suggesting a robust regularization effect under this recipe.
+Table~\ref{tab:cifar100_results} reports CIFAR-100 error rates for ResNet-50 and ResNet-18 trained from scratch under a fixed optimization and augmentation protocol. CutMix achieves the best performance for both backbones, reducing top-1 error by 4.23 points on ResNet-50 (23.48 $\rightarrow$ 19.25) and 1.75 points on ResNet-18 (24.33 $\rightarrow$ 22.58) relative to  Baseline. Mixup yields smaller but consistent gains over Baseline, while Cutout slightly increases both top-1 and top-5 error. Figure~\ref{fig:resnet50_val_top1_err} shows that CutMix improves validation error throughout training rather than only at convergence, suggesting a robust regularization effect under this recipe.
 
 \subsection{Tiny ImageNet}
 % ---- Tiny ImageNet results table ----
@@ -162,61 +151,75 @@ ResNet-50 + CutMix   & 46.62 & 22.45 \\
 \end{table}
 
 
-Table~\ref{tab:tinyimagenet_results} summarizes Tiny ImageNet performance. In contrast to CIFAR-100, CutMix does not improve over baseline training under the same fixed hyperparameters. The ResNet-50 baseline achieves 55.04\% top-1 / 78.15\% top-5 accuracy, while CutMix achieves 53.38\% / 77.55\%, corresponding to a +1.66 point increase in top-1 error and a +0.60 point increase in top-5 error. Figure~\ref{fig:tinyimagenet_top1_err} indicates that this gap persists across training rather than reflecting an early-epoch optimization artifact. These results suggest that CutMix benefits may be less robust in a small-scale ImageNet-derived regime without tuning of CutMix strength or schedule.
+Table~\ref{tab:tinyimagenet_results} summarizes Tiny ImageNet performance. In contrast to CIFAR-100, CutMix does not improve over Baseline training under the same fixed hyperparameters. The ResNet-50 baseline achieves 44.96\% top-1 / 21.85\% top-5 error, while CutMix achieves 46.62\% / 22.45\%, corresponding to a +1.66 point increase in top-1 error and a +0.60 point increase in top-5 error. Figure~\ref{fig:resnet50_val_top1_err} indicates that this gap persists across training rather than reflecting an early-epoch optimization artifact. These results suggest that CutMix benefits may be less robust in a small-scale ImageNet-derived regime without additional hyperparameter tuning.
 
 \begin{figure}[t]
 \centering
-\begin{minipage}[b]{0.49\linewidth}
+\begin{minipage}{0.49\linewidth}
   \centering
   \includegraphics[width=\linewidth]{figures/resnet50_cifar_val_top1_err.pdf}
-  \caption{ResNet-50 CIFAR-100 validation top-1 error.}
-  \label{fig:resnet50_cifar_top1_err}
 \end{minipage}\hfill
-\begin{minipage}[b]{0.49\linewidth}
+\begin{minipage}{0.49\linewidth}
   \centering
   \includegraphics[width=\linewidth]{figures/resnet50_tiny_val_top1_err.pdf}
-  \caption{ResNet-50 Tiny ImageNet validation top-1 error.}
-  \label{fig:resnet50_tiny_val_top1_err}
 \end{minipage}
+\caption{ResNet-50 validation top-1 error on CIFAR-100 (left) and Tiny ImageNet (right) under Baseline and CutMix.}
+\label{fig:resnet50_val_top1_err}
 \end{figure}
+
+
+% \begin{figure}[t]
+% \centering
+% \begin{minipage}[b]{0.49\linewidth}
+%   \centering
+%   \includegraphics[width=\linewidth]{figures/resnet50_cifar_val_top1_err.pdf}
+%   \caption{ResNet-50 CIFAR-100 validation top-1 error.}
+%   \label{fig:resnet50_cifar_top1_err}
+% \end{minipage}\hfill
+% \begin{minipage}[b]{0.49\linewidth}
+%   \centering
+%   \includegraphics[width=\linewidth]{figures/resnet50_tiny_val_top1_err.pdf}
+%   \caption{ResNet-50 Tiny ImageNet validation top-1 error.}
+%   \label{fig:resnet50_tiny_top1_err}
+% \end{minipage}
+% \end{figure}
 
 \section{Discussion}
 
 \subsection{Effect of augmentation across datasets}
 
-Our experiments show that the effectiveness of mixed-sample augmentation is dataset- and regime-dependent. On CIFAR-100, CutMix consistently yields the strongest gains for both ResNet-50 and ResNet-18, with MixUp providing a smaller but reliable improvement. On Tiny ImageNet, however, CutMix slightly degrades performance relative to baseline under the same hyperparameters. This divergence highlights that the empirical ordering reported in the original CutMix study is not universally preserved under constrained tuning and smaller ImageNet-derived data.
+Our experiments show that the effectiveness of mixed-sample augmentation is dataset- and regime-dependent. On CIFAR-100, CutMix consistently yields the strongest gains for both ResNet-50 and ResNet-18, with Mixup providing a smaller but reliable improvement. On Tiny ImageNet, however, CutMix slightly degrades performance relative to Baseline under the same hyperparameters. This divergence highlights that the empirical ordering reported in the original CutMix study is not universally preserved under constrained tuning and smaller ImageNet-derived data.
 
-A plausible contributing factor is the interaction between augmentation strength and dataset scale. CIFAR-100 provides 50{,}000 training examples at 32$\times$32 resolution; under these conditions, CutMix’s local patch replacement appears to regularize effectively without erasing too much semantic content. Tiny ImageNet is both higher resolution (64$\times$64) and substantially lower per-class sample size (500 images per class), so CutMix may introduce excessive label noise or disrupt fine-grained cues critical for recognition when used with the CIFAR-tuned $\alpha=0.1$ and $p=0.5$ settings.
+A plausible contributing factor is the interaction between augmentation strength, resolution, and task difficulty. CIFAR-100 provides 50{,}000 training examples at $32\times32$ resolution; under these conditions, CutMix’s local patch replacement appears to regularize effectively without erasing too much semantic content. Tiny ImageNet is higher resolution ($64\times64$) and doubles the number of classes (200 vs.\ 100), with more cluttered and fine-grained images. In this setting, CutMix may introduce excessive label noise or disrupt fine-grained cues critical for recognition when used with the CIFAR-tuned $\alpha=1.0$ and $p=0.5$ settings.
+
+
+\subsection{Regularization effects across architectures}
+
+On CIFAR-100, the relative ordering of augmentations is consistent across both backbones:
+\emph{CutMix $>$ Mixup $>$ Baseline $\approx$ Cutout}. However, the magnitude of improvement differs by architecture: CutMix reduces top-1 error by 4.23 points on ResNet-50 but only 1.75 points on ResNet-18. This pattern is consistent with the view that higher-capacity models benefit more from mixed-sample regularization, while lower-capacity models are partially regularized by their limited expressivity and therefore see smaller relative gains.
 
 \subsection{When and why Cutout can degrade performance}
 
-Cutout underperforms baseline on both ResNet backbones for CIFAR-100. Unlike MixUp and CutMix, Cutout removes image evidence without compensatory label interpolation, so its usefulness is sensitive to mask size and application probability. With a 25\% erased area and $p=0.5$, the occlusion may be too aggressive for 32$\times$32 images, leading to over-regularization and systematically higher error. Prior work reports Cutout gains when these parameters are co-tuned to the dataset and model capacity; our results therefore align with the known hyperparameter sensitivity of erasing-based regularizers.
+Cutout underperforms Baseline on both ResNet backbones for CIFAR-100. Unlike Mixup and CutMix, Cutout removes image evidence without compensatory label interpolation, so its usefulness is sensitive to mask size and application probability \citep{devries_improved_2017}. With a 25\% erased area and $p=0.5$, the occlusion may be too aggressive for low-resolution images, leading to over-regularization and systematically higher error. Prior work reports Cutout gains when these parameters are co-tuned to the dataset and model capacity~\citep{devries_improved_2017,cubuk_autoaugment_2019}. Therefore, our results align with the known hyperparameter sensitivity of erasing-based regularizers.
 
-\subsection{Comparison to original CutMix results}
+\subsection{Comparison to original CutMix claims}
 
-On CIFAR-100, our ranking
-\[
-\text{CutMix} > \text{MixUp} > \text{Baseline} \approx \text{Cutout}
-\]
-matches the hierarchy reported by \citet{yun_cutmix_2019} for both ImageNet-1k (ResNet-50) and CIFAR-100 (PyramidNet-200). However, the magnitude of improvement is smaller than in the original paper, and Cutout does not improve under our transferred erase settings. Together, these observations support the core qualitative claim (CutMix is strongest among the three), but they also indicate that the quantitative gains are sensitive to training scale and augmentation-specific tuning.
+On CIFAR-100, the augmentation ranking $\text{CutMix} > \text{Mixup} > \text{Baseline} \approx \text{Cutout}$ matches the hierarchy reported by \citet{yun_cutmix_2019} for both ImageNet-1k (ResNet-50) and CIFAR-100 (PyramidNet-200). In our setting, the absolute improvements from CutMix over Baseline are of similar or even larger magnitude, while Cutout does not improve under the transferred erase settings. Together, these observations support the core qualitative claim (CutMix is strongest among the three), but they also indicate that the quantitative gains are sensitive to training scale, architecture, and augmentation-specific tuning.
 
 The Tiny ImageNet result further emphasizes this point: even though CutMix is robust on CIFAR-100, it is not a guaranteed drop-in improvement in lower-data ImageNet-derived regimes without re-optimizing $\alpha$, application probability, and/or the learning-rate schedule.
 
 \subsection{Threats to validity}
-Our study has several limitations that may influence the generality of the conclusions. First, we transfer augmentation hyperparameters directly from prior work rather than re-tuning them for each dataset and backbone. In particular, CutMix strength ($\alpha$) and application probability, as well as Cutout erase size and probability, may be suboptimal in our small-scale regimes, especially on Tiny ImageNet. Second, we use a fixed 300-epoch step-decay schedule for all methods; different augmentations can interact differently with training length and learning-rate dynamics, so alternative schedules (e.g., cosine decay or longer runs) might change the magnitude or even the ordering of gains. Third, we modify the ResNet stem differently across datasets (CIFAR-style vs.\ ImageNet-style), which changes early receptive fields and downsampling behavior and could interact with mixed-sample augmentations in ways not present in the original setups. Finally, most configurations are evaluated with a single random seed, so we cannot fully characterize variance due to initialization or data order; while our core Baseline vs.\ CutMix comparisons are representative, some effects may not be statistically robust without multi-seed replication.
+
+Our study has several limitations that may influence the generality of the conclusions. First, we transfer augmentation hyperparameters directly from prior work rather than re-tuning them for each dataset and backbone. In particular, CutMix strength ($\alpha$) and application probability, as well as Cutout erase size and probability, may be suboptimal in our small-scale regimes, especially on Tiny ImageNet. Second, we use a fixed 300-epoch (ResNet-50) or 200-epoch (ResNet-18) step-decay schedule for all methods. Different augmentations can interact differently with training length and learning-rate dynamics, so alternative schedules (e.g., cosine decay or longer runs) might change the magnitude or even the ordering of gains. Third, we modify the ResNet stem differently across datasets (CIFAR-style vs. ImageNet-style), which changes early receptive fields and downsampling behavior and could interact with mixed-sample augmentations in ways not present in the original setups. Finally, all configurations are evaluated with a single random seed, so we cannot fully characterize variance due to initialization or data order. Some effects may not be statistically robust without multi-seed replication.
 
 \section{Conclusions and Future Work}
 
 \paragraph{Conclusions.}
-This tiny reproduction supports the main CutMix classification claim on CIFAR-100: CutMix yields the lowest top-1 and top-5 error for both ResNet-50 and ResNet-18 under a shared training recipe, outperforming MixUp and Cutout. MixUp provides smaller but consistent gains over baseline, while Cutout slightly degrades performance, consistent with its sensitivity to erase strength on small images. In contrast, CutMix does not improve ResNet-50 performance on Tiny ImageNet in our fixed-hyperparameter setting, suggesting that CutMix’s benefits are not uniformly transferable to low-data ImageNet-derived regimes without augmentation-specific tuning.
+This tiny reproduction supports the main CutMix classification claim on CIFAR-100: CutMix yields the lowest top-1 and top-5 error for both ResNet-50 and ResNet-18 under a shared training recipe, outperforming Mixup and Cutout. Mixup provides smaller but consistent gains over Baseline, while Cutout slightly degrades performance, consistent with its sensitivity to the size of the erased region on small images~\citep{devries_improved_2017}. In contrast, CutMix does not improve ResNet-50 performance on Tiny ImageNet in our fixed-hyperparameter setting, suggesting that CutMix’s benefits are not uniformly transferable to low-data ImageNet-derived regimes without augmentation-specific tuning.
 
 
 \paragraph{Future work.}
-Several follow-up experiments would clarify the dependencies observed here. The most direct extension is to tune augmentation-specific hyperparameters per regime: sweeping CutMix $\alpha$ and application probability on Tiny ImageNet, and varying Cutout erase area and probability on CIFAR-100, would test whether the observed degradations are primarily due to hyperparameter transfer. Completing the Tiny ImageNet grid with MixUp and Cutout runs would enable a full ordering comparison in this ImageNet-derived low-data setting. In addition, running multiple random seeds across all CIFAR-100 configurations and for Tiny ImageNet Baseline/CutMix would quantify variance and strengthen statistical claims. Finally, evaluating schedule sensitivity—such as cosine learning-rate decay or longer training horizons—could reveal whether mixed-sample augmentations require different optimization dynamics to realize their full benefit in constrained settings.
-
-
-\subsubsection*{Acknowledgments}
-I thank the course staff for feedback and for providing the project framework, and I acknowledge the use of publicly available datasets (CIFAR-100 and Tiny ImageNet) and the PyTorch/torchvision software stack.
+Several follow-up experiments would clarify the dependencies observed here. The most direct extension is to tune augmentation-specific hyperparameters per regime: sweeping CutMix $\alpha$ and application probability on Tiny ImageNet, and varying Cutout erase area and probability on CIFAR-100, would test whether the observed degradations are primarily due to hyperparameter transfer. Completing the Tiny ImageNet grid with Mixup and Cutout runs would enable a full ordering comparison in this ImageNet-derived low-data setting. In addition, running multiple random seeds across all CIFAR-100 configurations and for Tiny ImageNet Baseline/CutMix would quantify variance and strengthen statistical claims. Finally, evaluating schedule sensitivity—such as cosine learning-rate decay or longer training horizons—could reveal whether mixed-sample augmentations require different optimization dynamics to realize their full benefit in constrained settings.
 
 
 \bibliography{iclr2026_conference}
