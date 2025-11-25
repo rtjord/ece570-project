@@ -37,7 +37,7 @@ By the end of the notebook you should have:
 
 ## Notebook Organization
 
-- All cells prior to Global Config define functions and Classes.
+- All cells prior to Global Config define functions and classes.
 - All cells below Global Config train and test a model or create figures.
 - Editing the GLOBAL_CONFIG dict changes those settings across all models.
 - Editing the CONFIG dict above each experiment only affects that particular experiment.
