@@ -193,8 +193,6 @@ After a full run, the notebook produces:
 
 ## 6. Code Provenance (Original vs Adapted vs External)
 
-The assignment requires explicitly stating which parts of the code were written by us, adapted from prior code, or copied from external repositories.
-
 ### 6.1 Code Written for This Project
 
 All code in `ECE_570_Project.py` was written specifically for this CutMix reproduction.
