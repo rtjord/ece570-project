@@ -1,4 +1,4 @@
-# CutMix Tiny Reproduction — Colab Notebook
+# Cut Once, Measure Twice: A Reproduction of CutMix’s Reported Gains
 
 This repository contains a single Google Colab notebook, `ECE_570_Project.ipynb`, that reproduces the core classification results of **CutMix** versus **Baseline, Mixup, and Cutout** on CIFAR-100 and Tiny ImageNet using ResNet backbones.
 
