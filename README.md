@@ -195,13 +195,15 @@ After a full run, the notebook produces:
 
 ### 6.1 Code Written for This Project
 
-All code in `ECE_570_Project.py` was written specifically for this CutMix reproduction.
+All code in `ECE_570_Project.py` was written specifically for this CutMix reproduction. LLMs were used to help write and review this notebok.
 
 We rely heavily on **PyTorch** and **torchvision** APIs, but those are used via their public interfaces (e.g., `torchvision.models.resnet18`, `torchvision.datasets.CIFAR100`, `torchvision.transforms.v2`) rather than copying any of their internal implementation code.
 
 ### 6.2 Adapted from Prior Code
 
 At present, there is **no separate starter repository or older codebase** being directly edited inside this notebook. The design, function signatures, and training logic were developed for this reproduction.
+
+You can find the original CutMix code at https://github.com/clovaai/CutMix-PyTorch. We were aware of this repository but did not copy or adapt code from it.
 
 
 ### 6.3 Copied from External Repositories
