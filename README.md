@@ -42,7 +42,7 @@ The notebook is organized into the following sections (see the markdown headings
      - `build_cifar100_model`
      - `build_tiny_imagenet_model`
 
-5. **Train Model**
+5. **Train/Evaluate Model**
    - Defines loss, training loop, evaluation loop, and plotting utilities:
      - `SoftCE` (soft cross-entropy)
      - `plot_curves`
